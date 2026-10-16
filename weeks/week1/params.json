@@ -1,0 +1,9 @@
+{
+  "week": "week1",
+  "cutoff": "2026-09-18",
+  "target_friday": "2026-09-25",
+  "source": "Yahoo Finance via yfinance（未复权收盘价）",
+  "model": "median20（20 周中位数）",
+  "status": "历史存档：按当时提交 CSV（week1\\03-gp1_stock_.csv）与报告重建；口径与 W2+ 的 hfq 不同，仅留证",
+  "realized_note": "实际值取自 Week1 对照 PDF（未复权价格收益，未用 hfq 重算）"
+}

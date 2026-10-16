@@ -1,0 +1,9 @@
+{
+  "week": "week2",
+  "cutoff": "2026-09-25",
+  "target_friday": "2026-10-02",
+  "source": "Sina Finance via AkShare（hfq）",
+  "model": "AR（BIC 1-4 阶；十股全部 AR(1)）",
+  "status": "历史存档：按 week2_results.xlsx（原 week2_live.py 运行结果）重建",
+  "backtest_note": "原脚本 20 周滚动回测：AR 2.9006 / ARIMA 2.9027 / EWMA 3.0262 pp（200 股·周）"
+}

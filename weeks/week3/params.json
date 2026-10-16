@@ -1,0 +1,10 @@
+{
+  "week": "week3",
+  "cutoff": "2026-10-02",
+  "target_friday": "2026-10-09",
+  "source": "Sina Finance via AkShare（hfq）",
+  "model": "Pooled Ridge（7 特征 + 股票哑变量；156 周训练；8 周选 alpha）",
+  "ridge_alpha": 1.0,
+  "status": "历史存档：按 week3_ridge_results.xlsx 重建；重建复算与保存值 0 误差一致",
+  "backtest_note": "原报告 20 周回测 MAE 2.9759 pp、方向 48.5%"
+}

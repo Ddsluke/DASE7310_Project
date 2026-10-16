@@ -1,0 +1,12 @@
+{
+  "week": "week3",
+  "target_friday": "2026-10-09",
+  "values_file": "D:\\Backup\\Documents\\dase7310\\DASE7310_GP1_Repo\\weeks\\week3\\predictions.csv",
+  "n_missing_target_close": 0,
+  "missing_stocks": [],
+  "total_abs_error": 0.2418579533840637,
+  "mae_pp": 2.4185795338406373,
+  "rmse_pp": 3.3461511081954343,
+  "direction_hits": 4,
+  "evaluated_at": "2026-10-16T23:59:17"
+}
