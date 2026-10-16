@@ -435,7 +435,10 @@ def final_predictions(rows: pd.DataFrame, returns: pd.DataFrame, cutoff: pd.Time
 
 # ----------------------------------------------------------------------------- commands
 def cmd_refresh(args):
-    refresh_data(args.end, prefer=args.source)
+    try:
+        refresh_data(args.end, prefer=args.source)
+    except RuntimeError as exc:
+        raise SystemExit(f"STOPPED: {exc}") from None
 
 
 def cmd_backtest(args):
