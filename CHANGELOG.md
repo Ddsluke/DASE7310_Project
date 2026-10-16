@@ -16,3 +16,11 @@
   之间大幅翻转（不稳定）；市场因子显著略差；收缩方向一致有效。Ridge 与快照预测交叉验证一致（2e-16）。
 - 研究结论供 Week 5 提交决策（选项 A 保留 ridge / 选项 B 事前修订为 qreg50，二选一，须全组在提交前确定）。
 
+## 2026-10-17（决策后）
+- Week 5 **事前修订为 qreg50**：候选集加入 qreg50（`forecast.py` 同步更新），生成变体快照
+  `weeks/week5/predictions_qreg50.csv`、`submission_qreg50.xlsx`、`params_qreg50.json`、`backtest_qreg50.csv` 等；
+  v1 快照未做任何改动。修订记录：`weeks/week5/amendment_20261017.md`；本周报告：`weeks/week5/qreg50_weekly_report.md`。
+- `ledger.md` 追加修订记录（只增不改）。
+- README 重写：每周历史、复现指南、已知问题与注意事项。
+- 注：本机无 git 远程与凭据，未能 push；已生成 `DASE7310_GP1_Repo.bundle` 便于迁移/推送（见仓库外说明）。
+

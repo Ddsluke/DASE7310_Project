@@ -16,11 +16,14 @@
   ridge_mkt 额外加入上一已完成周的恒指/恒生科技周收益（hsi_lag1, hstech_lag1）。
 - 冻结回测窗口: 截止日前最近 20 个已知目标周（十股同一窗口）。
 - 提交模型选择（预注册规则，生成快照时即固定，之后不得追改）:
-    * 可提交候选: mean20, median20, ewma85, naive, ridge, ridge100, combo50, ridge_mkt
+    * 可提交候选: mean20, median20, ewma85, naive, ridge, ridge100, combo50, ridge_mkt, qreg50
     * combo50 = 0.5*ridge + 0.5*mean20；仅当窗口总绝对误差同时低于两个成分、
       且相对更优成分至少赢在 5/10 只股票上时，才算合格候选。
     * ridge_mkt 仅当窗口总绝对误差低于 ridge 时才算合格候选。
     * 在合格候选中选窗口总绝对误差最小者；zero（全零）只作参考展示，不作为提交候选。
+- 2026-10-17 事前修订（追加记录，未改动任何既有快照；见 weeks/week5/amendment_20261017.md）:
+    * 候选集加入 **qreg50**（中位数回归 / 分位数回归 q=0.5；与 ridge 同特征、同协议，仅损失函数
+      为绝对值+L1），依据：与课程"绝对误差"评分口径一致，20 周 / 52 周双窗口均优于 ridge。
 """
 from __future__ import annotations
 
@@ -32,7 +35,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import QuantileRegressor, Ridge
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -46,6 +49,7 @@ START = "2022-10-02"
 FEATURES = ["lag1", "lag2", "lag3", "mean4", "std4", "mean8", "std8"]
 MKT_FEATURES = ["hsi_lag1", "hstech_lag1"]
 ALPHAS = [1.0, 10.0, 100.0]
+QREG_ALPHAS = [0.001, 0.01, 0.1]
 TRAIN_WEEKS = 156
 TUNE_WEEKS = 8
 EVAL_WEEKS = 20
@@ -236,6 +240,37 @@ def ridge_predict(rows: pd.DataFrame, asof: pd.Timestamp, features: list[str], a
     return dict(zip(STOCKS, pred)), alpha, losses
 
 
+def qreg_model(alpha: float, features: list[str]):
+    """中位数回归（分位数 q=0.5）：与 ridge 同预处理，仅损失函数换为绝对值 + L1 惩罚。"""
+    prep = ColumnTransformer([
+        ("num", StandardScaler(), features),
+        ("stock", OneHotEncoder(handle_unknown="error", sparse_output=False), ["stock_code"]),
+    ])
+    return make_pipeline(prep, QuantileRegressor(quantile=0.5, alpha=alpha, solver="highs"))
+
+
+def qreg_predict(rows: pd.DataFrame, asof: pd.Timestamp):
+    """qreg50 预测。返回 (pred_dict, chosen_alpha, tune_losses)。alpha 同协议在 8 周上调参。"""
+    rows = rows.dropna(subset=FEATURES)
+    latest = latest_rows(rows, asof)
+    known = rows[(rows["target_week"] <= asof) & rows["y"].notna()]
+    weeks = sorted(known["target_week"].unique())[-TUNE_WEEKS:]
+    losses = {}
+    for a in QREG_ALPHAS:
+        error = 0.0
+        for week in weeks:
+            earlier = training_rows(rows, pd.Timestamp(week) - pd.Timedelta(days=7))
+            valid = known[known["target_week"] == week]
+            model = qreg_model(a, FEATURES).fit(earlier[FEATURES + ["stock_code"]], earlier["y"])
+            error += float(np.abs(model.predict(valid[FEATURES + ["stock_code"]]) - valid["y"]).sum())
+        losses[a] = round(error, 6)
+    alpha = min(losses, key=losses.get)
+    train = training_rows(rows, asof)
+    model = qreg_model(alpha, FEATURES).fit(train[FEATURES + ["stock_code"]], train["y"])
+    pred = model.predict(latest[FEATURES + ["stock_code"]])
+    return dict(zip(STOCKS, pred)), alpha, losses
+
+
 def simple_preds(returns: pd.DataFrame, cutoff: pd.Timestamp) -> dict[str, dict]:
     up = returns[returns.index <= cutoff]
     return {
@@ -267,6 +302,7 @@ def backtest(rows: pd.DataFrame, returns: pd.DataFrame, cutoff: pd.Timestamp,
 
     ridge_cache: dict[pd.Timestamp, dict] = {}
     ridge_mkt_cache: dict[pd.Timestamp, dict] = {}
+    qreg_cache: dict[pd.Timestamp, dict] = {}
     for t in targets:
         asof = t - pd.Timedelta(days=7)
         p, a, losses = ridge_predict(rows, asof, FEATURES)
@@ -280,6 +316,8 @@ def backtest(rows: pd.DataFrame, returns: pd.DataFrame, cutoff: pd.Timestamp,
                 ridge_mkt_cache[t] = pm
             except Exception as exc:  # noqa: BLE001
                 print(f"[backtest] ridge_mkt unavailable at {t.date()}: {exc}")
+        pq, qa, _ = qreg_predict(rows, asof)
+        qreg_cache[t] = pq
 
     for t in targets:
         simple = simple_preds(returns, t - pd.Timedelta(days=7))
@@ -287,6 +325,7 @@ def backtest(rows: pd.DataFrame, returns: pd.DataFrame, cutoff: pd.Timestamp,
             "mean20": simple["mean20"], "median20": simple["median20"], "ewma85": simple["ewma85"],
             "naive": simple["naive"], "zero": simple["zero"],
             "ridge": ridge_cache[t], "ridge100": ridge_cache[t]["_100"],
+            "qreg50": qreg_cache[t],
         }
         if t in ridge_mkt_cache:
             preds["ridge_mkt"] = ridge_mkt_cache[t]
@@ -312,7 +351,7 @@ def backtest(rows: pd.DataFrame, returns: pd.DataFrame, cutoff: pd.Timestamp,
     return summary, detail
 
 
-SUBMITTABLE = ["mean20", "median20", "ewma85", "naive", "ridge", "ridge100", "combo50", "ridge_mkt"]
+SUBMITTABLE = ["mean20", "median20", "ewma85", "naive", "ridge", "ridge100", "combo50", "ridge_mkt", "qreg50"]
 
 
 def select_model(summary: pd.DataFrame, detail: pd.DataFrame) -> tuple[str, list[str]]:
@@ -362,6 +401,9 @@ def final_predictions(rows: pd.DataFrame, returns: pd.DataFrame, cutoff: pd.Time
         pr, a, _ = ridge_predict(rows, asof, FEATURES)
         sm = simple_preds(returns, cutoff)["mean20"]
         return {c: 0.5 * pr[c] + 0.5 * sm[c] for c in STOCKS}, a
+    if chosen == "qreg50":
+        p, a, _ = qreg_predict(rows, asof)
+        return p, a
     raise ValueError(f"Unknown chosen model: {chosen}")
 
 
@@ -400,14 +442,16 @@ def cmd_snapshot(args):
         "moodle_value_4dp": [round(pred[c], 4) for c in STOCKS],
         "recommended_pct": [f"{pred[c] * 100:.2f}%" for c in STOCKS],
     })
-    pred_df.to_csv(week_dir / "predictions.csv", index=False)
-    with pd.ExcelWriter(week_dir / "submission.xlsx", engine="openpyxl") as writer:
+    suffix = args.variant or ""
+    pred_df.to_csv(week_dir / f"predictions{suffix}.csv", index=False)
+    with pd.ExcelWriter(week_dir / f"submission{suffix}.xlsx", engine="openpyxl") as writer:
         pred_df.to_excel(writer, sheet_name="Moodle Submission", index=False)
-    summary.round(6).to_csv(week_dir / "backtest.csv", index=False)
-    detail.to_csv(week_dir / "backtest_detail.csv", index=False)
+    summary.round(6).to_csv(week_dir / f"backtest{suffix}.csv", index=False)
+    detail.to_csv(week_dir / f"backtest_detail{suffix}.csv", index=False)
 
     params = {
         "week": args.week,
+        "variant": args.variant or None,
         "cutoff": str(cutoff.date()),
         "target_friday": str(target.date()),
         "source": meta["source"],
@@ -420,12 +464,14 @@ def cmd_snapshot(args):
         "alpha_history": summary.attrs.get("alpha_history"),
         "backtest_window": [str(frozen_targets(rows, cutoff)[0].date()), str(frozen_targets(rows, cutoff)[-1].date())],
         "created_before_target_week": True,
+        "amendment_note": ("候选集含 2026-10-17 事前修订加入的 qreg50；修订记录见 weeks/week5/amendment_20261017.md"
+                           if args.variant else None),
         "note": "本快照在目标周实际收益未知时生成；生成后不得追改。实际收益请用 evaluate 命令另存 realized.csv。",
     }
-    (week_dir / "params.json").write_text(json.dumps(params, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    (week_dir / f"params{suffix}.json").write_text(json.dumps(params, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     lines = [
-        f"# Week snapshot: {args.week}",
+        f"# Week snapshot: {args.week}" + (f"（变体 {suffix.lstrip('_')}）" if suffix else ""),
         "",
         f"- 截止日（数据截点）: {cutoff.date()}　目标周五: {target.date()}",
         f"- 数据源: {meta['source']}（hfq）",
@@ -444,8 +490,8 @@ def cmd_snapshot(args):
         "- zero 为参考基准，不参与提交候选。",
         "- 提交前请核对截点、源与 4 位小数。",
     ]
-    (week_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[snapshot] {args.week}: chosen={chosen}, alpha={alpha}")
+    (week_dir / f"report{suffix}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[snapshot] {args.week}{suffix}: chosen={chosen}, alpha={alpha}")
     print(pred_df.to_string(index=False))
     print(f"[snapshot] saved to {week_dir}")
 
@@ -506,6 +552,7 @@ def main():
     p = sub.add_parser("refresh-data"); p.add_argument("--end", default=None); p.set_defaults(func=cmd_refresh)
     p = sub.add_parser("backtest"); p.add_argument("--cutoff", required=True); p.set_defaults(func=cmd_backtest)
     p = sub.add_parser("snapshot"); p.add_argument("--cutoff", required=True); p.add_argument("--week", required=True)
+    p.add_argument("--variant", default=None, help="可选：变体后缀（如 _qreg50），输出 predictions_variant.csv 等，不会覆盖既有快照")
     p.set_defaults(func=cmd_snapshot)
     p = sub.add_parser("evaluate"); p.add_argument("--week", required=True); p.add_argument("--values", default=None)
     p.add_argument("--suffix", default=None); p.set_defaults(func=cmd_evaluate)
