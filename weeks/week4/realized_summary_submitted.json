@@ -1,0 +1,12 @@
+{
+  "week": "week4",
+  "target_friday": "2026-10-16",
+  "values_file": "weeks\\week4\\submitted_values.csv",
+  "n_missing_target_close": 0,
+  "missing_stocks": [],
+  "total_abs_error": 0.22898612501916438,
+  "mae_pp": 2.289861250191644,
+  "rmse_pp": 3.7198921474908424,
+  "direction_hits": 3,
+  "evaluated_at": "2026-10-16T23:59:23"
+}

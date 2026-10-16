@@ -1,0 +1,9 @@
+{
+  "week": "week4",
+  "cutoff": "2026-10-09",
+  "target_friday": "2026-10-16",
+  "source": "Sina Finance via AkShare（hfq）",
+  "model": "Pooled Ridge（按 week3_ridge.py 流程在 10-09 截止重建；origin 选 alpha=1.0）",
+  "status": "更正记录：predictions.csv 为正确重建值；submitted_values.csv 为当时实际提交值（=Week 3）",
+  "reconstruction_note": "重建管道已用 10-02 截止的 0 误差复现验证；本文件于目标周结束后整理，属事后更正建档，不改变已提交事实"
+}
