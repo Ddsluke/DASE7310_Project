@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ipynb_checkpoints/
+Thumbs.db
+desktop.ini
+.DS_Store

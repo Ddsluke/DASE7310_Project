@@ -2,9 +2,10 @@
 """DASE7310 GP1 - 单一脚本预测流水线（single-script pipeline）
 
 用法（在 repo 根目录、使用 dase7310 环境）:
-    python forecast.py refresh-data
+    python forecast.py refresh-data                         # 默认 auto：东财优先，失败整批切新浪
+    python forecast.py refresh-data --source sina           # 强制新浪（东财被拒的网络下推荐）
     python forecast.py backtest  --cutoff 2026-10-16
-    python forecast.py snapshot  --cutoff 2026-10-16 --week week5
+    python forecast.py snapshot  --cutoff 2026-10-16 --week week5 [--variant _qreg50]
     python forecast.py evaluate  --week week4
     python forecast.py evaluate  --week week4 --values weeks/week4/submitted_values.csv --suffix submitted
 
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -72,69 +74,92 @@ def md_table(df: pd.DataFrame) -> str:
 
 
 # ----------------------------------------------------------------------------- data layer
-def _fetch_stocks(start: str, end: str):
-    """整批来源表决：优先 Eastmoney；任一股票失败则整批换 Sina。返回 (df, source)。"""
+SOURCE_ORDERS = {
+    "auto": ["Eastmoney", "Sina Finance"],   # 默认：整批优先东财，失败整批切新浪（与历史记录一致）
+    "eastmoney": ["Eastmoney"],              # 强制东财（不可用即报错，用于对比测试）
+    "sina": ["Sina Finance"],                # 强制新浪（本机网络下东财被拒时推荐）
+}
+
+
+def _fetch_stocks(start: str, end: str, prefer: str = "auto", attempts: int = 2):
+    """整批来源表决 + 重试：按 prefer 的顺序逐源尝试，每个源重试 attempts 次。
+
+    整批原则：同一源内任一股票失败 → 放弃该源，整批切换下一个源（不允许同一批混源）。
+    """
     import akshare as ak
 
-    for source in ["Eastmoney", "Sina Finance"]:
-        frames = []
-        try:
-            for code in STOCKS:
-                if source == "Eastmoney":
-                    d = ak.stock_hk_hist(symbol=code.zfill(5), period="daily", start_date=start.replace("-", ""),
-                                         end_date=end.replace("-", ""), adjust="hfq")
-                    d = d.rename(columns={"日期": "date", "收盘": "close"})
-                else:
-                    d = ak.stock_hk_daily(symbol=code.zfill(5), adjust="hfq")
-                    d = d.rename(columns={"日期": "date", "收盘": "close"})
-                d = d[["date", "close"]].copy()
-                d["date"] = pd.to_datetime(d["date"])
-                d["close"] = pd.to_numeric(d["close"], errors="raise")
-                d = d[d["date"].between(start, end)].sort_values("date")
-                if d.empty or not np.isfinite(d["close"]).all() or (d["close"] <= 0).any() or d["date"].duplicated().any():
-                    raise ValueError(f"{code}: invalid prices from {source}")
-                d["stock_code"] = code
-                frames.append(d)
-            return pd.concat(frames, ignore_index=True), source
-        except Exception as exc:  # noqa: BLE001 - 整批切换来源
-            print(f"[refresh] {source} failed: {type(exc).__name__}: {exc}")
-    raise RuntimeError("Both data sources failed. No data refreshed.")
+    order = SOURCE_ORDERS[prefer]
+    last_exc: Exception | None = None
+    for source in order:
+        for attempt in range(1, attempts + 1):
+            frames = []
+            try:
+                for code in STOCKS:
+                    if source == "Eastmoney":
+                        d = ak.stock_hk_hist(symbol=code.zfill(5), period="daily", start_date=start.replace("-", ""),
+                                             end_date=end.replace("-", ""), adjust="hfq")
+                        d = d.rename(columns={"日期": "date", "收盘": "close"})
+                    else:
+                        d = ak.stock_hk_daily(symbol=code.zfill(5), adjust="hfq")
+                        d = d.rename(columns={"日期": "date", "收盘": "close"})
+                    d = d[["date", "close"]].copy()
+                    d["date"] = pd.to_datetime(d["date"])
+                    d["close"] = pd.to_numeric(d["close"], errors="raise")
+                    d = d[d["date"].between(start, end)].sort_values("date")
+                    if d.empty or not np.isfinite(d["close"]).all() or (d["close"] <= 0).any() or d["date"].duplicated().any():
+                        raise ValueError(f"{code}: invalid prices from {source}")
+                    d["stock_code"] = code
+                    frames.append(d)
+                return pd.concat(frames, ignore_index=True), source
+            except Exception as exc:  # noqa: BLE001 - 整批切换来源
+                last_exc = exc
+                print(f"[refresh] {source} attempt {attempt}/{attempts} failed: {type(exc).__name__}: {exc}", flush=True)
+                if attempt < attempts:
+                    time.sleep(2)
+    raise RuntimeError(f"No data refreshed (tried {order}). Last error: {last_exc}") from last_exc
 
 
 def _fetch_index(start: str, end: str):
-    """恒指与恒生科技（新浪接口）。失败时返回 None（快照将自动停用 ridge_mkt）。"""
-    import akshare as ak
+    """恒指与恒生科技：新浪优先、东财兜底。全部失败返回 (None, None)（快照自动停用 ridge_mkt）。"""
 
-    out = {}
-    try:
+    def _from(kind: str):
+        import akshare as ak
+
+        out = {}
         for sym, name in [("HSI", "hsi"), ("HSTECH", "hstech")]:
-            d = ak.stock_hk_index_daily_sina(symbol=sym)
+            d = (ak.stock_hk_index_daily_sina(symbol=sym) if kind == "sina"
+                 else ak.stock_hk_index_daily_em(symbol=sym))
             d = d.rename(columns={"日期": "date", "收盘": "close"})
             d = d[["date", "close"]].copy()
             d["date"] = pd.to_datetime(d["date"])
             d["close"] = pd.to_numeric(d["close"], errors="raise")
             out[name] = d[d["date"].between(start, end)].sort_values("date")
-    except Exception as exc:  # noqa: BLE001
-        print(f"[refresh] index fetch failed: {type(exc).__name__}: {exc}")
-        return None
-    return out
+        return out
+
+    for kind, label in [("sina", "Sina Finance (stock_hk_index_daily_sina)"),
+                        ("em", "Eastmoney (stock_hk_index_daily_em)")]:
+        try:
+            return _from(kind), label
+        except Exception as exc:  # noqa: BLE001
+            print(f"[refresh] index source {kind} failed: {type(exc).__name__}: {exc}", flush=True)
+    return None, None
 
 
 def _weekly_last(daily: pd.DataFrame) -> pd.Series:
     return daily.set_index("date")["close"].resample("W-FRI").last()
 
 
-def refresh_data(end: str | None = None):
+def refresh_data(end: str | None = None, prefer: str = "auto"):
     end = end or date.today().strftime("%Y-%m-%d")
     DATA.mkdir(parents=True, exist_ok=True)
 
-    px, source = _fetch_stocks(START, end)
+    px, source = _fetch_stocks(START, end, prefer=prefer)
     wide = px.pivot(index="date", columns="stock_code", values="close")
     closes = wide.resample("W-FRI").last()
     closes = closes[STOCKS]
     returns = closes.pct_change(fill_method=None)
 
-    idx = _fetch_index(START, end)
+    idx, idx_source = _fetch_index(START, end)
     idx_closes = idx_returns = None
     if idx is not None:
         idx_closes = pd.DataFrame({k: _weekly_last(v) for k, v in idx.items()})
@@ -149,11 +174,12 @@ def refresh_data(end: str | None = None):
 
     meta = {
         "source": source,
+        "source_preference": prefer,
         "requested_start": START,
         "requested_end": end,
         "refresh_time": datetime.now().isoformat(timespec="seconds"),
         "last_daily_date": {c: str(px[px.stock_code == c]["date"].max().date()) for c in STOCKS},
-        "index_source": "Sina Finance (stock_hk_index_daily_sina)" if idx is not None else None,
+        "index_source": idx_source,
         "index_last_date": ({k: str(v["date"].max().date()) for k, v in idx.items()} if idx is not None else None),
     }
     (DATA / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -409,7 +435,7 @@ def final_predictions(rows: pd.DataFrame, returns: pd.DataFrame, cutoff: pd.Time
 
 # ----------------------------------------------------------------------------- commands
 def cmd_refresh(args):
-    refresh_data(args.end)
+    refresh_data(args.end, prefer=args.source)
 
 
 def cmd_backtest(args):
@@ -549,7 +575,11 @@ def main():
     ap = argparse.ArgumentParser(description="DASE7310 GP1 single-script pipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("refresh-data"); p.add_argument("--end", default=None); p.set_defaults(func=cmd_refresh)
+    p = sub.add_parser("refresh-data")
+    p.add_argument("--end", default=None)
+    p.add_argument("--source", choices=["auto", "eastmoney", "sina"], default="auto",
+                   help="数据来源偏好：auto=东财优先失败整批切新浪（默认）；sina=直接用新浪；eastmoney=强制东财")
+    p.set_defaults(func=cmd_refresh)
     p = sub.add_parser("backtest"); p.add_argument("--cutoff", required=True); p.set_defaults(func=cmd_backtest)
     p = sub.add_parser("snapshot"); p.add_argument("--cutoff", required=True); p.add_argument("--week", required=True)
     p.add_argument("--variant", default=None, help="可选：变体后缀（如 _qreg50），输出 predictions_variant.csv 等，不会覆盖既有快照")

@@ -24,3 +24,10 @@
 - README 重写：每周历史、复现指南、已知问题与注意事项。
 - 注：本机无 git 远程与凭据，未能 push；已生成 `DASE7310_GP1_Repo.bundle` 便于迁移/推送（见仓库外说明）。
 
+## 2026-10-17（数据与环境存档 + fallback 配置）
+- 新增 `environment.yml`、`environment_explicit.txt`（环境精确锁定，含 pip 包）与 `SETUP.md`（环境/数据/复现说明）。
+- 数据源 fallback 可配置化：`refresh-data --source auto|sina|eastmoney`；整批切换（不混源）+ 每源重试 2 次；
+  指数改为新浪优先、东财兜底；`data/meta.json` 增加 `source_preference` 与 `index_source` 记录。
+- `.gitignore` 增补系统文件项（Thumbs.db、desktop.ini、.DS_Store）。
+- 仓库外生成独立数据存档 `..\数据存档_20261017\`（同批次 CSV + SHA256 校验清单）。
+

@@ -30,10 +30,13 @@
 ## 二、目录结构
 
 ```
-forecast.py           唯一提交脚本：refresh-data / backtest / snapshot / evaluate
-data/                 数据缓存（hfq 日/周收盘、周收益、HSI/HSTECH、meta.json）
+forecast.py           唯一提交脚本：refresh-data / backtest / snapshot / evaluate（取数支持 --source 配置）
+data/                 数据缓存（hfq 日/周收盘、周收益、HSI/HSTECH、meta.json，随 git 提交）
 weeks/week1..week5/   每周快照（见下）
 research/             研究实验台：16 候选同口径对比、显著性检验、qreg50 深度报告
+SETUP.md              环境与数据复现说明
+environment.yml       环境精确锁定（conda + pip）
+environment_explicit.txt  全部包下载 URL 清单
 ledger.md             周度台账（提交值、实际误差、失败速记；只增不改）
 CHANGELOG.md          变更记录
 归档_*（repo 外）      原代码只读归档（含 SHA256），旧驱动脚本未做任何修改
@@ -120,3 +123,6 @@ scaffold → data → weeks(week1-3) → week4(双轨) → week5(ridge 快照) �
 2. **东方财富接口在本网络被拒**（ConnectionError），流水线自动整批切新浪——与 W2/W3 保存记录一致，不影响口径。
 3. **W4 事故教训**：提交前逐项核对（截点正确、数字与文件一致、Moodle 真上传成功）；repo 的 `ledger.md` 负责登记。
 4. **口径**：W1 未复权 vs W2+ hfq；跨周 MAE 不可直接排名（不同窗口/口径），同窗对比才有效。
+5. **数据批次与来源**：`data/` 为 2026-10-16 下载的一批（vintage 记录在 `data/meta.json`，随 git 提交，快照复现不需联网）；
+   取数 fallback 可配置（`refresh-data --source auto|sina|eastmoney`，指数新浪→东财兜底），详见 `SETUP.md`；
+   仓库外另有独立数据存档（`..\数据存档_20261017\`，含 SHA256 校验）。
